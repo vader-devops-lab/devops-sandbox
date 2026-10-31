@@ -1,0 +1,8 @@
+# Who must review what. The LAST matching line wins.
+# With "Require review from Code Owners" on in the ruleset, a PR touching a
+# file needs an approval from one of that file's owners (Write access or more).
+# Every path needs 2+ possible approvers: authors can't approve their own PR,
+# so a path owned by one person deadlocks that person's PRs.
+
+# Default: the maintainers team owns everything.
+*    @vader-devops-lab/maintainers

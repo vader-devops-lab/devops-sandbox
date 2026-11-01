@@ -1,0 +1,54 @@
+# Alerts when a commit lands on main WITHOUT going through a merged PR.
+#
+# On a protected repo this should never fire. It's the safety net for when
+# protection can't be enforced (private repos on the free plan) or was
+# bypassed/disabled. It doesn't block anything: it detects and alerts by
+# opening an issue, which emails everyone watching the repo.
+name: Push audit
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read # look up which PR a commit came from
+  issues: write       # open the alert issue
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every pushed commit came from a merged PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PUSHER: ${{ github.actor }}
+          COMPARE_URL: ${{ github.event.compare }}
+        run: |
+          unreviewed=""
+          # The push event lists every commit in the push.
+          for sha in $(jq -r '.commits[].id' "$GITHUB_EVENT_PATH"); do
+            merged=0
+            # GitHub can take a few seconds to link a fresh merge to its PR.
+            for attempt in 1 2 3; do
+              merged=$(gh api "repos/$REPO/commits/$sha/pulls" \
+                --jq '[.[] | select(.merged_at != null)] | length')
+              [ "$merged" -gt 0 ] && break
+              sleep 10
+            done
+            [ "$merged" -eq 0 ] && unreviewed="$unreviewed $sha"
+          done
+
+          if [ -z "$unreviewed" ]; then
+            echo "All commits came from merged PRs."
+            exit 0
+          fi
+
+          body=$(printf 'Commits were pushed to `main` without a merged pull request.\n\n- **Pushed by:** %s\n- **Commits:**%s\n- **Diff:** %s\n\nReview these changes and check the ruleset and audit log.\n\ncc @vader-devops-lab/maintainers' \
+            "$PUSHER" "$(printf '\n  - %s' $unreviewed)" "$COMPARE_URL")
+          gh issue create --repo "$REPO" \
+            --title "Unreviewed push to main by $PUSHER" --body "$body"
+          echo "::error::Unreviewed commits on main:$unreviewed"
+          exit 1
